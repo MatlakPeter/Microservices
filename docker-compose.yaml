@@ -1,0 +1,159 @@
+services:
+  # --- Reverse Proxy (API Gateway) ---
+  reverse-proxy:
+    image: traefik:v2.11
+    container_name: api-gateway
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+    ports:
+      - "80:80"        # Main API entrypoint
+      - "8080:8080"    # Traefik Dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - app-net
+
+  # --- Databases ---
+  auth-db:
+    image: postgres:16-alpine
+    container_name: auth-db
+    environment:
+      POSTGRES_DB: auth_db
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${AUTH_DB_PASSWORD:?AUTH_DB_PASSWORD is required}
+    ports:
+      - "5433:5432"
+    volumes:
+      - auth_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d auth_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-net
+
+  user-db:
+    image: postgres:16-alpine
+    container_name: user-db
+    environment:
+      POSTGRES_DB: user_db
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${USER_DB_PASSWORD:?USER_DB_PASSWORD is required}
+    ports:
+      - "5434:5432"
+    volumes:
+      - user_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d user_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-net
+
+  device-db:
+    image: postgres:16-alpine
+    container_name: device-db
+    environment:
+      POSTGRES_DB: device_db
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${DEVICE_DB_PASSWORD:?DEVICE_DB_PASSWORD is required}
+    ports:
+      - "5435:5432"
+    volumes:
+      - device_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d device_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-net
+
+  # --- Microservices Layer ---
+  auth-service:
+    build: ./auth-service
+    container_name: auth-service
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${AUTH_DB_PASSWORD}@auth-db:5432/auth_db
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      USER_SERVICE_URL: http://user-service:8000
+    volumes:
+      - ./auth-service/app:/app/app
+    depends_on:
+      auth-db:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.auth.rule=PathPrefix(`/api/auth`)"
+      - "traefik.http.routers.auth.entrypoints=web"
+      - "traefik.http.services.auth.loadbalancer.server.port=8000"
+      # Gateway Validation Middleware (ForwardAuth)
+      - "traefik.http.middlewares.jwt-auth.forwardauth.address=http://auth-service:8000/api/auth/validate"
+      - "traefik.http.middlewares.jwt-auth.forwardauth.trustForwardHeader=true"
+      - "traefik.http.middlewares.jwt-auth.forwardauth.authResponseHeaders=X-User-Id,X-User-Role"
+    networks:
+      - app-net
+
+  user-service:
+    build: ./user-service
+    container_name: user-service
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${USER_DB_PASSWORD}@user-db:5432/user_db
+      DEVICE_SERVICE_URL: http://device-service:8000
+    volumes:
+      - ./user-service/app:/app/app
+    depends_on:
+      user-db:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.user.rule=PathPrefix(`/api/users`)"
+      - "traefik.http.routers.user.entrypoints=web"
+      - "traefik.http.services.user.loadbalancer.server.port=8000"
+    networks:
+      - app-net
+
+  device-service:
+    build: ./device-service
+    container_name: device-service
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${DEVICE_DB_PASSWORD}@device-db:5432/device_db
+    volumes:
+      - ./device-service/app:/app/app
+    depends_on:
+      device-db:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.device.rule=PathPrefix(`/api/devices`)"
+      - "traefik.http.routers.device.entrypoints=web"
+      - "traefik.http.services.device.loadbalancer.server.port=8000"
+    networks:
+      - app-net
+
+  # --- Frontend Client ---
+  frontend:
+    build: ./frontend
+    container_name: frontend-client
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.frontend.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.frontend.entrypoints=web"
+      - "traefik.http.routers.frontend.priority=1"
+      - "traefik.http.services.frontend.loadbalancer.server.port=3000"
+    networks:
+      - app-net
+
+volumes:
+  auth_data:
+  user_data:
+  device_data:
+
+networks:
+  app-net:
+    driver: bridge

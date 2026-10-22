@@ -1,0 +1,46 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Build artifacts (Maven / Gradle)
+target/
+build/
+*.jar
+*.war
+!.mvn/wrapper/maven-wrapper.jar
+
+# Python
+__pycache__/
+*.pyc
+
+# Frontend (Node / React / Angular)
+node_modules/
+dist/
+build/
+.npm
+npm-debug.log*
+
+# Environment & local secrets
+.env
+.env.local
+.env.*.local
+
+### IntelliJ IDEA ###
+.idea/
+*.iws
+*.iml
+*.ipr
+
+### Eclipse / STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings/
+.springBeans
+.sts4-cache
+
+# VSCode
+.vscode/
+*.swp
